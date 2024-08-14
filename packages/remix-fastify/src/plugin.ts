@@ -67,6 +67,7 @@ export type RemixFastifyOptions = {
   productionServerBuild?:
     | ServerBuild
     | (() => ServerBuild | Promise<ServerBuild>);
+  spaMode?: boolean;
 };
 
 export let remixFastify = fp<RemixFastifyOptions>(
@@ -83,6 +84,7 @@ export let remixFastify = fp<RemixFastifyOptions>(
       assetCacheControl = { public: true, maxAge: "1 year", immutable: true },
       defaultCacheControl = { public: true, maxAge: "1 hour" },
       productionServerBuild,
+      spaMode,
     },
   ) => {
     let cwd = process.env.REMIX_ROOT ?? process.cwd();
@@ -108,14 +110,6 @@ export let remixFastify = fp<RemixFastifyOptions>(
       serverBuildFile,
     );
     let SERVER_BUILD_URL = url.pathToFileURL(SERVER_BUILD).href;
-
-    let remixHandler = createRequestHandler({
-      mode,
-      getLoadContext,
-      build: vite
-        ? () => vite.ssrLoadModule("virtual:remix/server-build")
-        : productionServerBuild ?? (() => import(SERVER_BUILD_URL)),
-    });
 
     // handle asset requests
     if (vite) {
@@ -147,18 +141,29 @@ export let remixFastify = fp<RemixFastifyOptions>(
       });
     }
 
-    fastify.register(async function createRemixRequestHandler(childServer) {
-      // remove the default content type parsers
-      childServer.removeAllContentTypeParsers();
-      // allow all content types
-      childServer.addContentTypeParser("*", (_request, payload, done) => {
-        done(null, payload);
+    // Start the request handler if the production mode is not in SPA mode
+    if ((!vite && !spaMode) || vite) {
+      let remixHandler = createRequestHandler({
+        mode,
+        getLoadContext,
+        build: vite
+          ? () => vite.ssrLoadModule("virtual:remix/server-build")
+          : productionServerBuild ?? (() => import(SERVER_BUILD_URL)),
       });
 
-      let basepath = basename.replace(/\/+$/, "") + "/*";
+      fastify.register(async function createRemixRequestHandler(childServer) {
+        // remove the default content type parsers
+        childServer.removeAllContentTypeParsers();
+        // allow all content types
+        childServer.addContentTypeParser("*", (_request, payload, done) => {
+          done(null, payload);
+        });
 
-      childServer.all(basepath, remixHandler);
-    });
+        let basepath = basename.replace(/\/+$/, "") + "/*";
+
+        childServer.all(basepath, remixHandler);
+      });
+    }
   },
   {
     // replaced with the package name during build
